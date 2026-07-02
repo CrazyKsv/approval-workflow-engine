@@ -1,0 +1,23 @@
+.omc
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+
+# Node
+node_modules/
+dist/
+
+# Local databases / editor
+*.db
+.DS_Store
+.idea/
+.vscode/
+
+.playwright-mcp/
+
+*.tsbuildinfo
