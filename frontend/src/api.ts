@@ -107,6 +107,11 @@ export interface InboxItem {
   on_behalf_of: User | null
 }
 
+export interface StatusFeedItem {
+  request: ApprovalRequest
+  message: string
+}
+
 export interface Delegation {
   id: number
   delegator: User

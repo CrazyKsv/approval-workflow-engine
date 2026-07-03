@@ -49,7 +49,8 @@ def test_template_rejects_bad_condition_field(client, users):
 
 
 def test_full_request_lifecycle_over_http(client, users):
-    sarah, manager, finance = users["sarah"], users["manager"], users["finance1"]
+    """Employee request walks the full clarified chain: manager -> finance -> vp."""
+    sarah, manager, finance, vp = users["sarah"], users["manager"], users["finance1"], users["vp"]
 
     resp = client.post(
         "/api/requests",
@@ -65,30 +66,71 @@ def test_full_request_lifecycle_over_http(client, users):
     request_id = resp.json()["id"]
     assert resp.json()["status"] == "pending"
 
-    inbox = client.get("/api/inbox", headers=auth_headers(manager)).json()
-    assert inbox["total"] == 1
-    assert inbox["items"][0]["request"]["id"] == request_id
-
-    resp = client.post(
-        f"/api/requests/{request_id}/decision",
-        json={"decision": "approved", "comment": "ok"},
-        headers=auth_headers(manager),
-    )
-    assert resp.status_code == 200
-
-    inbox = client.get("/api/inbox", headers=auth_headers(finance)).json()
-    assert inbox["total"] == 1
-    resp = client.post(
-        f"/api/requests/{request_id}/decision",
-        json={"decision": "approved"},
-        headers=auth_headers(finance),
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "approved"
+    for approver, expected_status in ((manager, "pending"), (finance, "pending"), (vp, "approved")):
+        inbox = client.get("/api/inbox", headers=auth_headers(approver)).json()
+        assert inbox["total"] == 1
+        assert inbox["items"][0]["request"]["id"] == request_id
+        resp = client.post(
+            f"/api/requests/{request_id}/decision",
+            json={"decision": "approved", "comment": "ok"},
+            headers=auth_headers(approver),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == expected_status
 
     audit = client.get(f"/api/audit?request_id={request_id}", headers=auth_headers(sarah)).json()
     actions = {entry["action"] for entry in audit["items"]}
-    assert {"request_submitted", "step_activated", "decision_approved", "request_approved"} <= actions
+    assert {"request_submitted", "step_activated", "decision_approved", "step_completed", "request_approved"} <= actions
+
+
+def test_status_feed_endpoint(client, users):
+    resp = client.post(
+        "/api/requests",
+        json={
+            "template_id": users["expense_template"].id,
+            "title": "Course fee",
+            "amount": 150,
+            "data": {"expense_category": "education"},
+        },
+        headers=auth_headers(users["sarah"]),
+    )
+    request_id = resp.json()["id"]
+    client.post(
+        f"/api/requests/{request_id}/decision",
+        json={"decision": "approved"},
+        headers=auth_headers(users["manager"]),
+    )
+    feed = client.get("/api/inbox/status", headers=auth_headers(users["sarah"])).json()
+    assert len(feed) == 1
+    assert feed[0]["request"]["id"] == request_id
+    assert feed[0]["message"] == "approved by Mark Manager; waiting for finance approval"
+    # The feed is personal: another employee sees nothing
+    assert client.get("/api/inbox/status", headers=auth_headers(users["mike"])).json() == []
+
+
+def test_admin_cannot_use_request_or_delegation_features(client, users):
+    admin = users["admin"]
+    resp = client.post(
+        "/api/requests",
+        json={
+            "template_id": users["expense_template"].id,
+            "title": "Admin request",
+            "amount": 10,
+            "data": {"expense_category": "misc"},
+        },
+        headers=auth_headers(admin),
+    )
+    assert resp.status_code == 403
+    resp = client.post(
+        "/api/delegations",
+        json={
+            "delegate_id": users["vp"].id,
+            "starts_at": "2026-01-01T00:00:00Z",
+            "ends_at": "2030-01-01T00:00:00Z",
+        },
+        headers=auth_headers(admin),
+    )
+    assert resp.status_code == 403
 
 
 def test_non_approver_gets_403_on_decision(client, users):
@@ -162,7 +204,7 @@ def test_delegation_endpoints(client, users):
     resp = client.post(
         "/api/delegations",
         json={
-            "delegate_id": users["mike"].id,
+            "delegate_id": users["finance1"].id,
             "starts_at": "2026-01-01T00:00:00Z",
             "ends_at": "2030-01-01T00:00:00Z",
             "reason": "Vacation",
@@ -172,7 +214,7 @@ def test_delegation_endpoints(client, users):
     assert resp.status_code == 201
     delegation_id = resp.json()["id"]
 
-    listed = client.get("/api/delegations", headers=auth_headers(users["mike"])).json()
+    listed = client.get("/api/delegations", headers=auth_headers(users["finance1"])).json()
     assert listed["total"] == 1
 
     resp = client.delete(f"/api/delegations/{delegation_id}", headers=auth_headers(users["sarah"]))
@@ -180,6 +222,25 @@ def test_delegation_endpoints(client, users):
     resp = client.delete(f"/api/delegations/{delegation_id}", headers=auth_headers(users["manager"]))
     assert resp.status_code == 200
     assert resp.json()["is_active"] is False
+
+
+def test_delegation_role_rules_over_http(client, users):
+    def attempt(delegator, delegate):
+        return client.post(
+            "/api/delegations",
+            json={
+                "delegate_id": users[delegate].id,
+                "starts_at": "2026-01-01T00:00:00Z",
+                "ends_at": "2030-01-01T00:00:00Z",
+            },
+            headers=auth_headers(users[delegator]),
+        )
+
+    assert attempt("manager", "mike").status_code == 422        # manager -> employee
+    assert attempt("finance1", "manager").status_code == 422    # finance -> manager
+    assert attempt("vp", "manager").status_code == 422          # vp -> manager
+    assert attempt("sarah", "vp").status_code == 403            # employee cannot delegate
+    assert attempt("vp", "finance1").status_code == 201         # vp -> finance allowed
 
 
 def test_global_audit_admin_only(client, users):

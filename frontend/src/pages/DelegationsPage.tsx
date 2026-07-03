@@ -4,6 +4,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, Delegation, Page, User } from '../api'
 import { useAuth } from '../auth'
 
+// Who each role may delegate to (mirrors the server-side matrix; server re-validates).
+const ALLOWED_DELEGATE_ROLES: Record<string, string[]> = {
+  manager: ['manager', 'finance', 'vp'],
+  finance: ['finance', 'vp'],
+  vp: ['finance'],
+}
+
 export default function DelegationsPage() {
   const { user } = useAuth()
   const { message } = App.useApp()
@@ -95,12 +102,21 @@ export default function DelegationsPage() {
       />
       <Modal open={open} title="Delegate my approval authority" onCancel={() => setOpen(false)} onOk={form.submit}>
         <Form form={form} layout="vertical" onFinish={create}>
-          <Form.Item name="delegate_id" label="Delegate to" rules={[{ required: true }]}>
+          <Form.Item
+            name="delegate_id"
+            label="Delegate to"
+            rules={[{ required: true }]}
+            extra={`As ${user?.role}, you can delegate to: ${(ALLOWED_DELEGATE_ROLES[user?.role ?? ''] ?? []).join(', ') || 'no one'}`}
+          >
             <Select
               showSearch
               optionFilterProp="label"
               options={users
-                .filter((u) => u.id !== user?.id)
+                .filter(
+                  (u) =>
+                    u.id !== user?.id &&
+                    (ALLOWED_DELEGATE_ROLES[user?.role ?? ''] ?? []).includes(u.role),
+                )
                 .map((u) => ({ value: u.id, label: `${u.name} (${u.role})` }))}
             />
           </Form.Item>

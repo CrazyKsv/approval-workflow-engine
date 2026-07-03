@@ -41,9 +41,30 @@ def seed(db: Session) -> None:
 
     admin = users["admin@acme.com"]
 
+    def add_chain_steps(template_id: int) -> None:
+        """The clarified standard flow: manager -> finance -> vp. The engine skips the
+        step matching the requester's own role (a manager's request starts at finance)."""
+        db.add_all(
+            [
+                TemplateStep(
+                    template_id=template_id, step_order=1, name="Manager approval",
+                    approver_type="role", approver_role="manager", sla_hours=48, escalation_role="vp",
+                ),
+                TemplateStep(
+                    template_id=template_id, step_order=2, name="Finance review",
+                    approver_type="role", approver_role="finance", approval_mode="any", sla_hours=48,
+                    escalation_role="vp",
+                ),
+                TemplateStep(
+                    template_id=template_id, step_order=3, name="VP sign-off",
+                    approver_type="role", approver_role="vp", sla_hours=72,
+                ),
+            ]
+        )
+
     expense = WorkflowTemplate(
         name="Expense Report",
-        description="Employee expense reimbursement. Manager approves; Finance reviews expenses over $1,000.",
+        description="Expense reimbursement. Standard flow: manager -> finance -> VP.",
         category="finance",
         fields=[
             {"name": "amount", "label": "Amount (USD)", "type": "number", "required": True},
@@ -53,24 +74,11 @@ def seed(db: Session) -> None:
     )
     db.add(expense)
     db.flush()
-    db.add_all(
-        [
-            TemplateStep(
-                template_id=expense.id, step_order=1, name="Manager approval",
-                approver_type="role", approver_role="manager", sla_hours=48,
-                escalation_role="vp",
-            ),
-            TemplateStep(
-                template_id=expense.id, step_order=2, name="Finance review",
-                approver_type="group", approver_group_id=finance_group.id, approval_mode="any",
-                condition={"field": "amount", "op": ">", "value": 1000},
-            ),
-        ]
-    )
+    add_chain_steps(expense.id)
 
     purchase = WorkflowTemplate(
         name="Purchase Order",
-        description="Equipment/software purchases. Manager approves; Finance over $5,000 (whole team); VP over $10,000.",
+        description="Equipment/software purchases. Standard flow: manager -> finance -> VP.",
         category="procurement",
         fields=[
             {"name": "amount", "label": "Amount (USD)", "type": "number", "required": True},
@@ -81,29 +89,11 @@ def seed(db: Session) -> None:
     )
     db.add(purchase)
     db.flush()
-    db.add_all(
-        [
-            TemplateStep(
-                template_id=purchase.id, step_order=1, name="Manager approval",
-                approver_type="role", approver_role="manager", sla_hours=48, escalation_role="vp",
-            ),
-            TemplateStep(
-                template_id=purchase.id, step_order=2, name="Finance review",
-                approver_type="group", approver_group_id=finance_group.id, approval_mode="all",
-                condition={"field": "amount", "op": ">", "value": 5000},
-            ),
-            TemplateStep(
-                template_id=purchase.id, step_order=3, name="VP sign-off",
-                approver_type="role", approver_role="vp",
-                condition={"field": "amount", "op": ">", "value": 10000},
-                sla_hours=72, escalation_role="admin",
-            ),
-        ]
-    )
+    add_chain_steps(purchase.id)
 
     timeoff = WorkflowTemplate(
         name="Time Off Request",
-        description="Vacation and leave requests approved by any manager.",
+        description="Vacation and leave requests. Standard flow: manager -> finance -> VP.",
         category="hr",
         fields=[
             {"name": "start_date", "label": "Start date", "type": "date", "required": True},
@@ -114,12 +104,7 @@ def seed(db: Session) -> None:
     )
     db.add(timeoff)
     db.flush()
-    db.add(
-        TemplateStep(
-            template_id=timeoff.id, step_order=1, name="Manager approval",
-            approver_type="role", approver_role="manager", sla_hours=72,
-        )
-    )
+    add_chain_steps(timeoff.id)
 
     db.commit()
     logger.info("Seeded %d users, 1 group, 3 workflow templates", len(USERS))

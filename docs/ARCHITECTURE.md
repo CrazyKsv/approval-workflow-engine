@@ -129,6 +129,10 @@ erDiagram
 - **Submit**: validate data against template `fields` → create request → walk steps in
   order, evaluate each `condition` against request data (`amount` merged in); steps whose
   condition is false are recorded as `skipped`; the first applicable step is activated.
+- **Requester-role skip** (product clarification 2026-07-03): a step whose approver
+  target is the requester's own *role* is also skipped — the standard chain is
+  manager → finance → vp, so a manager's request starts at finance. Admin accounts
+  cannot submit requests at all.
 - **Activate step**: resolve approver_type to concrete users (the requester is excluded
   from approving their own request unless no one else can); set `due_at = now + sla_hours`.
 - **Delegation**: at decision time a delegate may act on any pending authority of a

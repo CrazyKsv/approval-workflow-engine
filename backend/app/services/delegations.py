@@ -6,13 +6,33 @@ from app.models import Delegation, User
 from app.schemas import DelegationCreate
 from app.services.audit import write_audit
 
+# Who may delegate, and to which roles (product clarification 2026-07-03).
+# employee and admin cannot delegate at all.
+DELEGATION_ALLOWED_ROLES: dict[str, set[str]] = {
+    "manager": {"manager", "finance", "vp"},
+    "finance": {"finance", "vp"},
+    "vp": {"finance"},
+}
+
+
+def allowed_delegate_roles(role: str) -> set[str]:
+    return DELEGATION_ALLOWED_ROLES.get(role, set())
+
 
 def create_delegation(db: Session, actor: User, payload: DelegationCreate) -> Delegation:
+    allowed_roles = allowed_delegate_roles(actor.role)
+    if not allowed_roles:
+        raise PermissionDeniedError(f"Users with role '{actor.role}' cannot delegate approvals")
     if payload.delegate_id == actor.id:
         raise ValidationFailedError("Cannot delegate to yourself")
     delegate = db.get(User, payload.delegate_id)
     if delegate is None or not delegate.is_active:
         raise NotFoundError("Delegate user not found or inactive")
+    if delegate.role not in allowed_roles:
+        raise ValidationFailedError(
+            f"A {actor.role} can only delegate to roles: {', '.join(sorted(allowed_roles))} "
+            f"(got {delegate.role})"
+        )
     if payload.ends_at <= payload.starts_at:
         raise ValidationFailedError("ends_at must be after starts_at")
 

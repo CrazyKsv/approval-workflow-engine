@@ -36,9 +36,15 @@ docker compose up --build
 | vp@acme.com | vp |
 | sarah@acme.com / mike@acme.com | employee |
 
-Three workflows are seeded: **Expense Report** (manager → finance if > $1,000),
-**Purchase Order** (manager → whole finance team if > $5,000 → VP if > $10,000, with
-SLAs/escalation), and **Time Off Request**.
+Three workflows are seeded (**Expense Report**, **Purchase Order**, **Time Off
+Request**), all using the standard chain **manager → finance → VP**. The step matching
+the requester's own role is skipped automatically (a manager's request starts at
+finance). Requesters can never approve their own requests — including via delegation.
+
+**Access control:** admin manages workflow templates only (plus AI assistant);
+employees get Inbox/My Requests/Assistant; manager/finance/vp additionally get
+Delegations. Delegation follows a role matrix: manager → manager/finance/vp,
+finance → finance/vp, vp → finance.
 
 ### Try the demo flow
 
@@ -46,7 +52,10 @@ SLAs/escalation), and **Time Off Request**.
    laptop purchase" → confirm when asked.
 2. Sign in as `manager@acme.com` → "What requests are waiting for my approval?" →
    "Approve Sarah's laptop purchase" → confirm. (Or use the **Approval Inbox** UI.)
-3. Check the request detail page for the step timeline and audit trail.
+3. Repeat as `finance1@acme.com`, then `vp@acme.com` to walk the full chain.
+4. Back as Sarah, the Inbox status feed reads e.g. "Approved by Mark Manager; waiting
+   for finance approval"; the request detail page shows the step timeline and audit
+   trail.
 
 ## Local development (without Docker)
 
@@ -67,13 +76,18 @@ npm run dev                             # proxies /api to http://localhost:8000
 ### Tests
 
 ```bash
-cd backend && python -m pytest tests -v
+cd backend && python -m pytest tests -v      # unit tests (also run in CI)
+./autotest/integration/run_integration.sh    # integration: fresh disposable PostgreSQL
+./autotest/e2e/run_e2e.sh [--with-agent]     # e2e: rebuilds the stack from an empty DB
 ```
 
-43 tests cover the workflow engine (conditions, sequential/parallel routing, quorum,
-delegation, escalation), the REST API (auth, RBAC, lifecycle, pagination, audit), and
-the agent (multi-turn conversation with the confirmation gate, tool authorization,
-failure handling) using a scripted fake LLM.
+Unit tests cover the workflow engine (chain routing with requester-role skip,
+conditions, quorum, delegation matrix, self-approval block, escalation), the REST API
+(auth, RBAC, lifecycle, pagination, audit, status feed), and the agent (multi-turn
+confirmation gate, tool authorization, failure handling) with a scripted fake LLM.
+Integration tests run the real Alembic migration and API against PostgreSQL; E2E
+drives the composed stack through the nginx proxy from a fresh database. Test plans
+and UAT results live in `autotest/`.
 
 ### Migrations & schema
 

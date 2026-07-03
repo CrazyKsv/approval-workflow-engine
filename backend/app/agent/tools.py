@@ -183,6 +183,22 @@ def tool_get_my_requests(db: Session, user: User, args: dict) -> dict:
     return {"requests": [_request_dict(r) for r in requests]}
 
 
+def tool_get_request_status(db: Session, user: User, args: dict) -> dict:
+    """Status feed for the user's own requests, as human-readable messages."""
+    items = engine.status_feed(db, user)
+    return {
+        "request_status": [
+            {
+                "request_id": item["request"].id,
+                "title": item["request"].title,
+                "status": item["request"].status,
+                "message": f"Request #{item['request'].id} '{item['request'].title}' — {item['message']}",
+            }
+            for item in items
+        ]
+    }
+
+
 def tool_get_request_details(db: Session, user: User, args: dict) -> dict:
     request = db.get(ApprovalRequest, args.get("request_id"))
     if request is None:
@@ -301,6 +317,7 @@ TOOL_EXECUTORS: dict[str, Callable[[Session, User, dict], dict]] = {
     "submit_request": tool_submit_request,
     "get_pending_approvals": tool_get_pending_approvals,
     "get_my_requests": tool_get_my_requests,
+    "get_request_status": tool_get_request_status,
     "get_request_details": tool_get_request_details,
     "decide_request": tool_decide_request,
     "create_delegation": tool_create_delegation,
@@ -392,6 +409,16 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "get_request_status",
+            "description": "Status feed for the current user's own requests as ready-to-relay messages, "
+            "e.g. \"Request #7 'Laptop' — approved by Mark Manager; waiting for finance approval\". "
+            "Use this when the user asks about the status/progress of their requests (their 'inbox status').",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_request_details",
             "description": "Full detail of one request: steps, approvers, decisions. Use before deciding.",
             "parameters": {
@@ -424,6 +451,8 @@ TOOL_SCHEMAS: list[dict] = [
         "function": {
             "name": "create_delegation",
             "description": "Temporarily delegate the current user's approval authority to another user. "
+            "Role rules (server-enforced): manager may delegate to manager/finance/vp; finance to "
+            "finance/vp; vp to finance only; employee and admin cannot delegate. "
             "Requires confirmation before executing.",
             "parameters": {
                 "type": "object",
