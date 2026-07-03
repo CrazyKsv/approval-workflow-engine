@@ -102,7 +102,7 @@ export default function RequestDetailPage() {
                 title: (
                   <Space>
                     {step.name}
-                    {step.status === 'skipped' && <Tag>skipped by condition</Tag>}
+                    {step.status === 'skipped' && <Tag>skipped by routing rule</Tag>}
                     {step.escalated && <Tag color="red">escalated</Tag>}
                   </Space>
                 ),

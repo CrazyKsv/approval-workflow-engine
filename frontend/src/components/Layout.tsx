@@ -26,12 +26,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
 
+  // Access matrix: admin -> templates + assistant only; employee -> inbox/requests/
+  // assistant; manager/finance/vp -> those plus delegations.
+  const role = user?.role ?? 'employee'
+  const isApprover = ['manager', 'finance', 'vp'].includes(role)
   const items = [
-    { key: '/inbox', icon: <InboxOutlined />, label: 'Approval Inbox' },
-    { key: '/requests', icon: <FileTextOutlined />, label: 'My Requests' },
+    ...(role !== 'admin'
+      ? [
+          { key: '/inbox', icon: <InboxOutlined />, label: 'Approval Inbox' },
+          { key: '/requests', icon: <FileTextOutlined />, label: 'My Requests' },
+        ]
+      : []),
     { key: '/assistant', icon: <MessageOutlined />, label: 'AI Assistant' },
-    { key: '/delegations', icon: <UserSwitchOutlined />, label: 'Delegations' },
-    ...(user?.role === 'admin'
+    ...(isApprover ? [{ key: '/delegations', icon: <UserSwitchOutlined />, label: 'Delegations' }] : []),
+    ...(role === 'admin'
       ? [{ key: '/templates', icon: <PartitionOutlined />, label: 'Workflow Templates' }]
       : []),
     { key: 'logout', icon: <LogoutOutlined />, label: 'Sign out' },

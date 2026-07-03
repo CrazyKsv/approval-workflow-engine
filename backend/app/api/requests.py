@@ -15,6 +15,7 @@ from app.schemas import (
     RequestDetailOut,
     RequestOut,
     RequestResubmit,
+    StatusFeedItemOut,
 )
 from app.services import engine
 
@@ -59,6 +60,16 @@ def inbox(
     items = engine.inbox_for(db, user)
     start = (params.page - 1) * params.size
     return Page(items=items[start : start + params.size], total=len(items), page=params.page, size=params.size)
+
+
+@router.get("/inbox/status", response_model=list[StatusFeedItemOut])
+def inbox_status(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Human-readable status of the caller's own requests, e.g.
+    'approved by Mark Manager; waiting for finance approval'."""
+    return engine.status_feed(db, user)
 
 
 @router.get("/requests/{request_id}", response_model=RequestDetailOut)

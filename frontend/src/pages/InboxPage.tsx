@@ -1,25 +1,33 @@
-import { App, Button, Card, Input, Modal, Space, Table, Tag, Typography } from 'antd'
+import { App, Button, Card, Input, List, Modal, Space, Table, Tag, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, InboxItem, Page } from '../api'
+import { api, InboxItem, Page, StatusFeedItem } from '../api'
+import { useAuth } from '../auth'
+import { STATUS_COLORS } from './RequestsPage'
 
 type DecisionKind = 'approved' | 'rejected' | 'changes_requested'
 
 export default function InboxPage() {
   const { message } = App.useApp()
+  const { user } = useAuth()
+  const isApprover = ['manager', 'finance', 'vp'].includes(user?.role ?? '')
   const [items, setItems] = useState<InboxItem[]>([])
+  const [feed, setFeed] = useState<StatusFeedItem[]>([])
   const [loading, setLoading] = useState(false)
   const [decideItem, setDecideItem] = useState<{ item: InboxItem; kind: DecisionKind } | null>(null)
   const [comment, setComment] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
-    api
-      .get<Page<InboxItem>>('/inbox', { params: { size: 100 } })
-      .then((r) => setItems(r.data.items))
-      .finally(() => setLoading(false))
-  }, [])
+    const calls: Promise<unknown>[] = [
+      api.get<StatusFeedItem[]>('/inbox/status').then((r) => setFeed(r.data)),
+    ]
+    if (isApprover) {
+      calls.push(api.get<Page<InboxItem>>('/inbox', { params: { size: 100 } }).then((r) => setItems(r.data.items)))
+    }
+    Promise.all(calls).finally(() => setLoading(false))
+  }, [isApprover])
 
   useEffect(load, [load])
 
@@ -40,8 +48,10 @@ export default function InboxPage() {
   }
 
   return (
-    <Card title="Approval Inbox" extra={<Button onClick={load}>Refresh</Button>}>
-      <Table
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      {isApprover && (
+        <Card title="Waiting for your decision" extra={<Button onClick={load}>Refresh</Button>}>
+          <Table
         rowKey={(item) => `${item.request.id}-${item.step.id}-${item.on_behalf_of?.id ?? 'me'}`}
         loading={loading}
         dataSource={items}
@@ -97,21 +107,52 @@ export default function InboxPage() {
             ),
           },
         ]}
-      />
-      <Modal
-        open={!!decideItem}
-        title={`Confirm: ${decideItem?.kind.replace('_', ' ')} — ${decideItem?.item.request.title}`}
-        onOk={decide}
-        onCancel={() => setDecideItem(null)}
-        okText="Confirm decision"
+          />
+          <Modal
+            open={!!decideItem}
+            title={`Confirm: ${decideItem?.kind.replace('_', ' ')} — ${decideItem?.item.request.title}`}
+            onOk={decide}
+            onCancel={() => setDecideItem(null)}
+            okText="Confirm decision"
+          >
+            <Typography.Paragraph>
+              {decideItem?.item.on_behalf_of &&
+                `You are acting on behalf of ${decideItem.item.on_behalf_of.name} (delegated). `}
+              Add an optional comment:
+            </Typography.Paragraph>
+            <Input.TextArea rows={3} value={comment} onChange={(e) => setComment(e.target.value)} />
+          </Modal>
+        </Card>
+      )}
+
+      <Card
+        title="My request status"
+        extra={!isApprover && <Button onClick={load}>Refresh</Button>}
+        loading={loading && feed.length === 0}
       >
-        <Typography.Paragraph>
-          {decideItem?.item.on_behalf_of &&
-            `You are acting on behalf of ${decideItem.item.on_behalf_of.name} (delegated). `}
-          Add an optional comment:
-        </Typography.Paragraph>
-        <Input.TextArea rows={3} value={comment} onChange={(e) => setComment(e.target.value)} />
-      </Modal>
-    </Card>
+        <List
+          dataSource={feed}
+          locale={{ emptyText: 'You have not submitted any requests yet' }}
+          renderItem={(item) => (
+            <List.Item
+              actions={[
+                <Tag key="status" color={STATUS_COLORS[item.request.status]}>
+                  {item.request.status.replace('_', ' ')}
+                </Tag>,
+              ]}
+            >
+              <List.Item.Meta
+                title={
+                  <Link to={`/requests/${item.request.id}`}>
+                    #{item.request.id} — {item.request.title}
+                  </Link>
+                }
+                description={item.message.charAt(0).toUpperCase() + item.message.slice(1)}
+              />
+            </List.Item>
+          )}
+        />
+      </Card>
+    </Space>
   )
 }

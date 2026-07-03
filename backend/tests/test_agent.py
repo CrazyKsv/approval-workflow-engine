@@ -115,7 +115,7 @@ def test_multi_turn_submission_with_confirmation_gate(client, users, monkeypatch
 
 
 def test_agent_pending_approvals_includes_delegations(client, users, monkeypatch, db):
-    # Sarah submits; manager delegates to mike; mike asks the assistant
+    # Sarah submits; manager delegates to vp (allowed by the matrix); vp asks the assistant
     client.post(
         "/api/requests",
         json={
@@ -126,11 +126,12 @@ def test_agent_pending_approvals_includes_delegations(client, users, monkeypatch
         },
         headers=auth_headers(users["sarah"]),
     )
-    client.post(
+    resp = client.post(
         "/api/delegations",
-        json={"delegate_id": users["mike"].id, "starts_at": "2026-01-01T00:00:00Z", "ends_at": "2030-01-01T00:00:00Z"},
+        json={"delegate_id": users["vp"].id, "starts_at": "2026-01-01T00:00:00Z", "ends_at": "2030-01-01T00:00:00Z"},
         headers=auth_headers(users["manager"]),
     )
+    assert resp.status_code == 201
     install_fake(
         monkeypatch,
         [
@@ -141,12 +142,81 @@ def test_agent_pending_approvals_includes_delegations(client, users, monkeypatch
     resp = client.post(
         "/api/agent/chat",
         json={"message": "What requests are waiting for my approval?"},
-        headers=auth_headers(users["mike"]),
+        headers=auth_headers(users["vp"]),
     )
     event = resp.json()["tool_events"][0]
     approvals = event["result"]["pending_approvals"]
-    assert len(approvals) == 1
-    assert approvals[0]["on_behalf_of"]["name"] == "Mark Manager"
+    delegated = [a for a in approvals if a["on_behalf_of"]]
+    assert len(delegated) == 1
+    assert delegated[0]["on_behalf_of"]["name"] == "Mark Manager"
+
+
+def test_agent_status_feed_tool_formats_messages(client, users, monkeypatch, db):
+    client.post(
+        "/api/requests",
+        json={
+            "template_id": users["expense_template"].id,
+            "title": "Team offsite",
+            "amount": 700,
+            "data": {"expense_category": "events"},
+        },
+        headers=auth_headers(users["sarah"]),
+    )
+    install_fake(
+        monkeypatch,
+        [
+            assistant_tool_call("get_request_status", {}),
+            assistant_text("Your request is waiting for manager approval."),
+        ],
+    )
+    resp = client.post(
+        "/api/agent/chat",
+        json={"message": "What's the status of my requests?"},
+        headers=auth_headers(users["sarah"]),
+    )
+    event = resp.json()["tool_events"][0]
+    items = event["result"]["request_status"]
+    assert len(items) == 1
+    assert "waiting for manager approval" in items[0]["message"].lower()
+
+
+def test_agent_delegation_tool_enforces_role_matrix(db, users):
+    # An employee cannot delegate at all — tool relays the structured error
+    result = run_tool(
+        db, users["sarah"], "create_delegation",
+        {
+            "delegate_id": users["vp"].id,
+            "starts_at": "2026-01-01T00:00:00",
+            "ends_at": "2030-01-01T00:00:00",
+            "confirmed": True,
+        },
+    )
+    assert result["error"] == "PermissionDeniedError"
+    # vp -> manager is outside the matrix
+    result = run_tool(
+        db, users["vp"], "create_delegation",
+        {
+            "delegate_id": users["manager"].id,
+            "starts_at": "2026-01-01T00:00:00",
+            "ends_at": "2030-01-01T00:00:00",
+            "confirmed": True,
+        },
+    )
+    assert result["error"] == "ValidationFailedError"
+
+
+def test_agent_admin_cannot_submit_requests(db, users):
+    result = run_tool(
+        db, users["admin"], "submit_request",
+        {
+            "template_id": users["expense_template"].id,
+            "title": "Admin sneaky request",
+            "amount": 10,
+            "data": {"expense_category": "misc"},
+            "confirmed": True,
+        },
+    )
+    assert result["error"] == "PermissionDeniedError"
 
 
 def test_tool_layer_enforces_authorization(db, users):

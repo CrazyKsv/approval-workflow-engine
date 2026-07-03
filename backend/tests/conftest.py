@@ -53,6 +53,7 @@ def users(db):
     db.flush()
     directory["finance_group"] = finance_group
 
+    # The clarified standard chain: manager -> finance -> vp (role steps, no conditions).
     expense = WorkflowTemplate(
         name="Expense Report",
         category="finance",
@@ -73,8 +74,11 @@ def users(db):
             ),
             TemplateStep(
                 template_id=expense.id, step_order=2, name="Finance review",
-                approver_type="group", approver_group_id=finance_group.id, approval_mode="any",
-                condition={"field": "amount", "op": ">", "value": 1000},
+                approver_type="role", approver_role="finance", approval_mode="any",
+            ),
+            TemplateStep(
+                template_id=expense.id, step_order=3, name="VP sign-off",
+                approver_type="role", approver_role="vp",
             ),
         ]
     )

@@ -109,13 +109,11 @@ def resolve_step_approvers(db: Session, tstep: TemplateStep) -> list[User]:
 def _activate_step(db: Session, request: ApprovalRequest, step: StepInstance) -> None:
     tstep = step.template_step
     approvers = resolve_step_approvers(db, tstep) if tstep else []
-    # The requester should not approve their own request; drop them unless they are
-    # the only possible approver.
-    non_self = [u for u in approvers if u.id != request.requester_id]
-    if non_self:
-        approvers = non_self
+    # Self-approval is never allowed: the requester is excluded, and a step left with
+    # no eligible approvers fails the submission loudly rather than routing badly.
+    approvers = [u for u in approvers if u.id != request.requester_id]
     if not approvers:
-        raise ConflictError(f"Step '{step.name}' has no resolvable approvers")
+        raise ConflictError(f"Step '{step.name}' has no eligible approvers")
 
     step.status = "active"
     step.activated_at = utcnow()
@@ -165,6 +163,8 @@ def validate_request_data(template: WorkflowTemplate, amount: float | None, data
 
 
 def submit_request(db: Session, requester: User, payload: RequestCreate) -> ApprovalRequest:
+    if requester.role == "admin":
+        raise PermissionDeniedError("Admin accounts manage workflow templates and cannot submit requests")
     template = db.get(WorkflowTemplate, payload.template_id)
     if template is None:
         raise NotFoundError("Workflow template not found")
@@ -192,24 +192,32 @@ def submit_request(db: Session, requester: User, payload: RequestCreate) -> Appr
 
 
 def _route(db: Session, request: ApprovalRequest, template: WorkflowTemplate) -> None:
-    """Create step instances (evaluating conditions against the request data) and
-    activate the first applicable step."""
+    """Create step instances and activate the first applicable step.
+
+    A step is skipped when its condition doesn't match the request data, or when its
+    approver target is the requester's own role (a manager's request skips the manager
+    step and goes straight to finance → vp).
+    """
     data = _eval_data(request)
     for tstep in template.steps:
-        applies = evaluate_condition(tstep.condition, data)
+        skip_reason = None
+        if not evaluate_condition(tstep.condition, data):
+            skip_reason = {"reason": "condition", "condition": tstep.condition}
+        elif tstep.approver_type == "role" and tstep.approver_role == request.requester.role:
+            skip_reason = {"reason": "requester_role", "role": tstep.approver_role}
         step = StepInstance(
             request=request,
             template_step_id=tstep.id,
             step_order=tstep.step_order,
             name=tstep.name,
             approval_mode=tstep.approval_mode,
-            status="pending" if applies else "skipped",
+            status="skipped" if skip_reason else "pending",
         )
         db.add(step)
-        if not applies:
+        if skip_reason:
             write_audit(
                 db, None, "step_skipped", "step_instance", None, request.id,
-                {"step": tstep.name, "condition": tstep.condition},
+                {"step": tstep.name, **skip_reason},
             )
     db.flush()
     _advance_or_complete(db, request)
@@ -227,6 +235,8 @@ def decide(db: Session, request_id: int, actor: User, decision: str, comment: st
     step = next((s for s in request.steps if s.status == "active"), None)
     if step is None:
         raise ConflictError("Request has no active step")
+    if actor.id == request.requester_id:
+        raise PermissionDeniedError("You cannot decide on your own request, even via delegation")
 
     allowed_ids = {actor.id} | active_delegator_ids(db, actor)
     pending_auths = [a for a in step.approvers if a.status == "pending" and a.approver_id in allowed_ids]
@@ -238,7 +248,7 @@ def decide(db: Session, request_id: int, actor: User, decision: str, comment: st
 
     db.add(
         Decision(
-            request_id=request.id,
+            request=request,
             step_instance_id=step.id,
             approver_id=auth.approver_id,
             acting_user_id=actor.id,
@@ -316,9 +326,16 @@ def resubmit_request(db: Session, request_id: int, actor: User, payload: Request
         request.data = payload.data
     validate_request_data(request.template, float(request.amount) if request.amount is not None else None, request.data)
 
+    # Routing restarts from step 1: drop old step instances AND their decisions
+    # explicitly (not relying on DB-level FK cascades) so prior approvals can never
+    # resurface in the status feed. Expire the loaded collections afterwards —
+    # deleted rows would otherwise linger in memory and confuse re-routing.
+    for decision_row in list(request.decisions):
+        db.delete(decision_row)
     for step in list(request.steps):
         db.delete(step)
     db.flush()
+    db.expire(request, ["steps", "decisions"])
     request.status = "pending"
     request.completed_at = None
     write_audit(db, actor, "request_resubmitted", "approval_request", request.id, request.id, {})
@@ -370,6 +387,46 @@ def inbox_for(db: Session, user: User) -> list[dict]:
             }
         )
     return items
+
+
+# --- Status feed ---------------------------------------------------------------------------
+
+def _waiting_on_label(step: StepInstance) -> str:
+    tstep = step.template_step
+    if tstep is not None and tstep.approver_type == "role" and tstep.approver_role:
+        return tstep.approver_role
+    return step.name
+
+
+def status_message(request: ApprovalRequest) -> str:
+    """Human-readable status line, e.g. 'approved by Mark Manager; waiting for
+    finance approval'. Used by the inbox status feed and the agent."""
+    approvals = [d for d in request.decisions if d.decision == "approved"]
+    approved_by = ", ".join(dict.fromkeys(d.approver.name for d in approvals))
+    if request.status == "pending":
+        step = next((s for s in request.steps if s.status == "active"), None)
+        waiting = f"waiting for {_waiting_on_label(step)} approval" if step else "waiting"
+        return f"approved by {approved_by}; {waiting}" if approved_by else waiting.capitalize()
+    if request.status == "approved":
+        return f"fully approved (by {approved_by})" if approved_by else "fully approved"
+    if request.status == "rejected":
+        rejecter = next((d for d in reversed(request.decisions) if d.decision == "rejected"), None)
+        return f"rejected by {rejecter.approver.name}" if rejecter else "rejected"
+    if request.status == "changes_requested":
+        changer = next((d for d in reversed(request.decisions) if d.decision == "changes_requested"), None)
+        return f"changes requested by {changer.approver.name}" if changer else "changes requested"
+    return request.status
+
+
+def status_feed(db: Session, user: User, limit: int = 25) -> list[dict]:
+    """Status of the user's own requests, newest first."""
+    requests = db.scalars(
+        select(ApprovalRequest)
+        .where(ApprovalRequest.requester_id == user.id)
+        .order_by(ApprovalRequest.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [{"request": r, "message": status_message(r)} for r in requests]
 
 
 # --- Escalation -----------------------------------------------------------------------------

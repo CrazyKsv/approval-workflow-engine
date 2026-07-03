@@ -214,6 +214,11 @@ class InboxItemOut(BaseModel):
     on_behalf_of: UserOut | None = None  # set when acting via delegation
 
 
+class StatusFeedItemOut(BaseModel):
+    request: RequestOut
+    message: str  # e.g. "approved by Mark Manager; waiting for finance approval"
+
+
 # --- Delegations ---------------------------------------------------------------
 
 class DelegationCreate(BaseModel):

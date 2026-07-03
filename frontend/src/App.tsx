@@ -10,6 +10,28 @@ import RequestDetailPage from './pages/RequestDetailPage'
 import RequestsPage from './pages/RequestsPage'
 import TemplatesPage from './pages/TemplatesPage'
 
+// UI access control (product clarification):
+// admin -> templates + assistant only; employee -> inbox/requests/assistant;
+// manager/finance/vp -> inbox/requests/assistant/delegations.
+export const ROUTE_ROLES: Record<string, string[]> = {
+  '/inbox': ['employee', 'manager', 'finance', 'vp'],
+  '/requests': ['employee', 'manager', 'finance', 'vp'],
+  '/delegations': ['manager', 'finance', 'vp'],
+  '/templates': ['admin'],
+  '/assistant': ['admin', 'employee', 'manager', 'finance', 'vp'],
+}
+
+export const defaultRouteFor = (role: string | undefined) =>
+  role === 'admin' ? '/templates' : '/inbox'
+
+function RequireRole({ route, children }: { route: string; children: React.ReactElement }) {
+  const { user } = useAuth()
+  if (!user || !ROUTE_ROLES[route]?.includes(user.role)) {
+    return <Navigate to={defaultRouteFor(user?.role)} replace />
+  }
+  return children
+}
+
 export default function App() {
   const { user, loading } = useAuth()
 
@@ -26,14 +48,18 @@ export default function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Navigate to="/inbox" replace />} />
-        <Route path="/login" element={<Navigate to="/inbox" replace />} />
-        <Route path="/inbox" element={<InboxPage />} />
-        <Route path="/requests" element={<RequestsPage />} />
-        <Route path="/requests/:id" element={<RequestDetailPage />} />
-        <Route path="/templates" element={<TemplatesPage />} />
-        <Route path="/delegations" element={<DelegationsPage />} />
+        <Route path="/" element={<Navigate to={defaultRouteFor(user.role)} replace />} />
+        <Route path="/login" element={<Navigate to={defaultRouteFor(user.role)} replace />} />
+        <Route path="/inbox" element={<RequireRole route="/inbox"><InboxPage /></RequireRole>} />
+        <Route path="/requests" element={<RequireRole route="/requests"><RequestsPage /></RequireRole>} />
+        <Route path="/requests/:id" element={<RequireRole route="/requests"><RequestDetailPage /></RequireRole>} />
+        <Route path="/templates" element={<RequireRole route="/templates"><TemplatesPage /></RequireRole>} />
+        <Route
+          path="/delegations"
+          element={<RequireRole route="/delegations"><DelegationsPage /></RequireRole>}
+        />
         <Route path="/assistant" element={<ChatPage />} />
+        <Route path="*" element={<Navigate to={defaultRouteFor(user.role)} replace />} />
       </Routes>
     </Layout>
   )
