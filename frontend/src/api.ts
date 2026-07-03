@@ -145,6 +145,29 @@ export interface ChatResponse {
   tool_events: ToolEvent[]
 }
 
+export interface AgentConversation {
+  id: number
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentMessage {
+  id: number
+  role: 'user' | 'assistant' | 'tool'
+  content: string | null
+  tool_name: string | null
+  tool_args: Record<string, unknown> | null
+  tool_result: Record<string, unknown> | null
+  latency_ms: number | null
+  error: string | null
+  created_at: string
+}
+
+export interface AgentConversationDetail extends AgentConversation {
+  messages: AgentMessage[]
+}
+
 export interface Page<T> {
   items: T[]
   total: number

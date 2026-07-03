@@ -1,7 +1,8 @@
-import { RobotOutlined, SendOutlined, ToolOutlined, UserOutlined } from '@ant-design/icons'
-import { Avatar, Button, Card, Collapse, Input, Space, Spin, Tag, Typography } from 'antd'
+import { HistoryOutlined, RobotOutlined, SendOutlined, ToolOutlined, UserOutlined } from '@ant-design/icons'
+import { Avatar, Button, Card, Collapse, Drawer, Empty, Input, List, Space, Spin, Tag, Typography } from 'antd'
+import dayjs from 'dayjs'
 import { useEffect, useRef, useState } from 'react'
-import { api, ChatResponse, ToolEvent } from '../api'
+import { AgentConversation, api, ChatResponse, AgentConversationDetail, Page, ToolEvent } from '../api'
 import { useAuth } from '../auth'
 
 interface Message {
@@ -16,6 +17,31 @@ const SUGGESTIONS = [
   'Show me the status of my requests',
   'Delegate my approvals to Mike for next week',
 ]
+
+/** Rebuild the visible transcript from persisted agent messages: tool rows fold
+ *  into the assistant reply that followed them, mirroring the live conversation. */
+function rebuildMessages(detail: AgentConversationDetail): Message[] {
+  const rebuilt: Message[] = []
+  let pendingTools: ToolEvent[] = []
+  for (const m of detail.messages) {
+    if (m.role === 'user') {
+      rebuilt.push({ role: 'user', content: m.content ?? '' })
+    } else if (m.role === 'tool') {
+      pendingTools.push({
+        tool_name: m.tool_name ?? '',
+        arguments: (m.tool_args ?? {}) as Record<string, unknown>,
+        result: m.tool_result,
+        latency_ms: m.latency_ms,
+        error: m.error,
+      })
+    } else if (m.role === 'assistant' && m.content && m.content.trim()) {
+      rebuilt.push({ role: 'assistant', content: m.content, toolEvents: pendingTools })
+      pendingTools = []
+    }
+  }
+  if (pendingTools.length) rebuilt.push({ role: 'assistant', content: '', toolEvents: pendingTools })
+  return rebuilt
+}
 
 function ToolTrace({ events }: { events: ToolEvent[] }) {
   if (!events.length) return null
@@ -62,16 +88,52 @@ export default function ChatPage() {
   const [conversationId, setConversationId] = useState<number | null>(null)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [conversations, setConversations] = useState<AgentConversation[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [viewingPast, setViewingPast] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, busy])
 
+  const loadConversations = () => {
+    setLoadingHistory(true)
+    api
+      .get<Page<AgentConversation>>('/agent/conversations', { params: { size: 50 } })
+      .then((r) => setConversations(r.data.items))
+      .finally(() => setLoadingHistory(false))
+  }
+
+  const openHistory = () => {
+    loadConversations()
+    setHistoryOpen(true)
+  }
+
+  const openConversation = async (id: number) => {
+    try {
+      const r = await api.get<AgentConversationDetail>(`/agent/conversations/${id}`)
+      setMessages(rebuildMessages(r.data))
+      setConversationId(id)
+      setViewingPast(true)
+      setHistoryOpen(false)
+    } catch {
+      /* ignore — surfaced via empty transcript */
+    }
+  }
+
+  const newConversation = () => {
+    setMessages([])
+    setConversationId(null)
+    setViewingPast(false)
+  }
+
   const send = async (text?: string) => {
     const content = (text ?? input).trim()
     if (!content || busy) return
     setInput('')
+    setViewingPast(false)
     setMessages((m) => [...m, { role: 'user', content }])
     setBusy(true)
     try {
@@ -98,20 +160,24 @@ export default function ChatPage() {
     <Card
       title="AI Workflow Assistant"
       extra={
-        conversationId && (
-          <Button
-            size="small"
-            onClick={() => {
-              setMessages([])
-              setConversationId(null)
-            }}
-          >
-            New conversation
+        <Space>
+          <Button icon={<HistoryOutlined />} onClick={openHistory}>
+            History
           </Button>
-        )
+          {(conversationId || messages.length > 0) && (
+            <Button size="small" onClick={newConversation}>
+              New conversation
+            </Button>
+          )}
+        </Space>
       }
       styles={{ body: { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 180px)' } }}
     >
+      {viewingPast && (
+        <Typography.Text type="secondary" style={{ marginBottom: 8 }}>
+          Viewing a saved conversation — send a message to continue it, or start a new one.
+        </Typography.Text>
+      )}
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: 8 }}>
         {messages.length === 0 && (
           <div style={{ textAlign: 'center', marginTop: 60 }}>
@@ -172,6 +238,33 @@ export default function ChatPage() {
           Send
         </Button>
       </Space.Compact>
+
+      <Drawer
+        title="Conversation history"
+        placement="right"
+        width={380}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        extra={<Button size="small" onClick={loadConversations}>Refresh</Button>}
+      >
+        <List
+          loading={loadingHistory}
+          dataSource={conversations}
+          locale={{ emptyText: <Empty description="No saved conversations yet" /> }}
+          renderItem={(c) => (
+            <List.Item
+              style={{ cursor: 'pointer' }}
+              onClick={() => openConversation(c.id)}
+              actions={[c.id === conversationId ? <Tag color="blue">current</Tag> : null]}
+            >
+              <List.Item.Meta
+                title={c.title || `Conversation #${c.id}`}
+                description={`Updated ${dayjs(c.updated_at).format('MMM D, YYYY HH:mm')}`}
+              />
+            </List.Item>
+          )}
+        />
+      </Drawer>
     </Card>
   )
 }

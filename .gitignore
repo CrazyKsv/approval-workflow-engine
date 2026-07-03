@@ -23,3 +23,5 @@ dist/
 *.tsbuildinfo
 
 prompt.md
+
+*.png
