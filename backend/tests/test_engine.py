@@ -312,6 +312,20 @@ def test_status_feed_only_own_requests(db, users):
     assert engine.status_feed(db, users["mike"]) == []
 
 
+def test_status_feed_after_resubmit_drops_old_approvals(db, users):
+    """Resubmission restarts routing; discarded approvals must not resurface."""
+    request = submit(db, users, amount=2000.0)
+    engine.decide(db, request.id, users["manager"], "approved")
+    db.commit()
+    engine.decide(db, request.id, users["finance1"], "changes_requested", comment="fix it")
+    db.commit()
+    engine.resubmit_request(db, request.id, users["sarah"], RequestResubmit(amount=1500.0))
+    db.commit()
+    feed = engine.status_feed(db, users["sarah"])
+    assert feed[0]["message"] == "Waiting for manager approval"
+    assert request.decisions == []
+
+
 # --- Escalation ------------------------------------------------------------------------
 
 def test_overdue_step_escalates_and_escalation_overrides_quorum(db, users):

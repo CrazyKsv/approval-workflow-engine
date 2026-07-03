@@ -133,11 +133,14 @@ erDiagram
   target is the requester's own *role* is also skipped — the standard chain is
   manager → finance → vp, so a manager's request starts at finance. Admin accounts
   cannot submit requests at all.
-- **Activate step**: resolve approver_type to concrete users (the requester is excluded
-  from approving their own request unless no one else can); set `due_at = now + sla_hours`.
+- **Activate step**: resolve approver_type to concrete users; the requester is always
+  excluded — a step with no eligible approvers fails the submission loudly. Set
+  `due_at = now + sla_hours`.
 - **Delegation**: at decision time a delegate may act on any pending authority of a
   delegator whose active window covers now; the decision records both whose authority
-  was used and who actually acted.
+  was used and who actually acted. A role matrix restricts who may delegate to whom
+  (manager → manager/finance/vp, finance → finance/vp, vp → finance; employee/admin
+  never). The acting user can never be the requester, even via delegation.
 - **Approve**: with `approval_mode=any` one approval completes the step; with `all`,
   every resolved approver must approve (parallel/group approval). Completion activates
   the next applicable step, or the request becomes `approved`.

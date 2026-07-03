@@ -326,9 +326,16 @@ def resubmit_request(db: Session, request_id: int, actor: User, payload: Request
         request.data = payload.data
     validate_request_data(request.template, float(request.amount) if request.amount is not None else None, request.data)
 
+    # Routing restarts from step 1: drop old step instances AND their decisions
+    # explicitly (not relying on DB-level FK cascades) so prior approvals can never
+    # resurface in the status feed. Expire the loaded collections afterwards —
+    # deleted rows would otherwise linger in memory and confuse re-routing.
+    for decision_row in list(request.decisions):
+        db.delete(decision_row)
     for step in list(request.steps):
         db.delete(step)
     db.flush()
+    db.expire(request, ["steps", "decisions"])
     request.status = "pending"
     request.completed_at = None
     write_audit(db, actor, "request_resubmitted", "approval_request", request.id, request.id, {})
