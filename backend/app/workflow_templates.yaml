@@ -1,0 +1,52 @@
+# Declarative workflow-template catalog.
+#
+# This file is the source of truth for the baseline workflow templates. On startup the
+# app loads every template below that does not already exist (matched by name), so:
+#   * a fresh database is provisioned with these templates automatically, and
+#   * onboarding a new template can be done by PR (add an entry here) — alongside the
+#     admin UI ("New Template") and the AI assistant (create_workflow_template tool).
+#
+# Loading is create-if-missing by name: existing templates (including ones created by an
+# admin or the assistant) are never mutated or duplicated on restart. To change a live
+# template, use the admin UI/assistant or add it here under a new name/version.
+#
+# Each step routes by approver_type (role | group | user). The standard chain is
+# manager -> finance -> vp; the engine skips the step matching the requester's own role.
+# Optional per-step: approval_mode (any|all), sla_hours, escalation_role, and a `condition`
+# ({field, op, value}; ops: ==, !=, >, >=, <, <=, in, not_in, contains) for conditional routing.
+
+templates:
+  - name: Expense Report
+    description: "Expense reimbursement. Standard flow: manager -> finance -> VP."
+    category: finance
+    fields:
+      - { name: amount, label: Amount (USD), type: number, required: true }
+      - { name: expense_category, label: Expense category, type: string, required: true }
+    steps:
+      - { step_order: 1, name: Manager approval, approver_type: role, approver_role: manager, sla_hours: 48, escalation_role: vp }
+      - { step_order: 2, name: Finance review, approver_type: role, approver_role: finance, approval_mode: any, sla_hours: 48, escalation_role: vp }
+      - { step_order: 3, name: VP sign-off, approver_type: role, approver_role: vp, sla_hours: 72 }
+
+  - name: Purchase Order
+    description: "Equipment/software purchases. Standard flow: manager -> finance -> VP."
+    category: procurement
+    fields:
+      - { name: amount, label: Amount (USD), type: number, required: true }
+      - { name: vendor, label: Vendor, type: string, required: true }
+      - { name: justification, label: Business justification, type: string, required: false }
+    steps:
+      - { step_order: 1, name: Manager approval, approver_type: role, approver_role: manager, sla_hours: 48, escalation_role: vp }
+      - { step_order: 2, name: Finance review, approver_type: role, approver_role: finance, approval_mode: any, sla_hours: 48, escalation_role: vp }
+      - { step_order: 3, name: VP sign-off, approver_type: role, approver_role: vp, sla_hours: 72 }
+
+  - name: Time Off Request
+    description: "Vacation and leave requests. Standard flow: manager -> finance -> VP."
+    category: hr
+    fields:
+      - { name: start_date, label: Start date, type: date, required: true }
+      - { name: end_date, label: End date, type: date, required: true }
+      - { name: reason, label: Reason, type: string, required: false }
+    steps:
+      - { step_order: 1, name: Manager approval, approver_type: role, approver_role: manager, sla_hours: 48, escalation_role: vp }
+      - { step_order: 2, name: Finance review, approver_type: role, approver_role: finance, approval_mode: any, sla_hours: 48, escalation_role: vp }
+      - { step_order: 3, name: VP sign-off, approver_type: role, approver_role: vp, sla_hours: 72 }

@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
 
         with SessionLocal() as db:
             seed(db)
+    if settings.load_templates_on_startup:
+        from app.services.template_loader import load_templates_from_yaml
+
+        with SessionLocal() as db:
+            load_templates_from_yaml(db)
     task = None
     if settings.enable_escalation_sweep:
         task = asyncio.create_task(_escalation_loop(settings.escalation_sweep_seconds))
