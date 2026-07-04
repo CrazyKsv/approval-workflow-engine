@@ -30,6 +30,7 @@ from app.main import app
 from app.models import User
 from app.security import create_access_token
 from app.seed import seed as seed_db
+from app.services.template_loader import load_templates_from_yaml
 
 
 @pytest.fixture(scope="session")
@@ -48,6 +49,8 @@ def migrated_db():
 def seeded(migrated_db):
     with SessionLocal() as db:
         seed_db(db)
+    with SessionLocal() as db:
+        load_templates_from_yaml(db)
     yield
 
 

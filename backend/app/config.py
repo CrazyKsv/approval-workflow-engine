@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     escalation_sweep_seconds: int = 60
 
     seed_on_startup: bool = True
+
+    # Declarative workflow-template catalog, auto-loaded on startup (create-if-missing).
+    load_templates_on_startup: bool = True
+    templates_file: str = str(Path(__file__).resolve().parent / "workflow_templates.yaml")
 
 
 @lru_cache

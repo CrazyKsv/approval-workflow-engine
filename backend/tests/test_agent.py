@@ -268,3 +268,43 @@ def test_model_failure_returns_graceful_error(client, users, monkeypatch, db):
     # The failure is persisted in the trace
     row = db.scalar(select(AgentMessage).where(AgentMessage.error.is_not(None)))
     assert row is not None
+
+
+def test_list_conversations_scoped_to_user(client, users, monkeypatch):
+    """History retrieval: each user sees only their own conversations, titled by the
+    first message and ordered most-recently-updated first."""
+    install_fake(monkeypatch, [assistant_text("Hi Sarah"), assistant_text("Hi Mike")])
+    sarah_headers = auth_headers(users["sarah"])
+    mike_headers = auth_headers(users["mike"])
+
+    s = client.post("/api/agent/chat", json={"message": "hello from sarah"}, headers=sarah_headers).json()
+    m = client.post("/api/agent/chat", json={"message": "hello from mike"}, headers=mike_headers).json()
+
+    sarah_list = client.get("/api/agent/conversations", headers=sarah_headers).json()
+    assert sarah_list["total"] == 1
+    ids = [c["id"] for c in sarah_list["items"]]
+    assert s["conversation_id"] in ids
+    assert m["conversation_id"] not in ids
+    assert sarah_list["items"][0]["title"] == "hello from sarah"
+
+
+def test_conversation_detail_rbac(client, users, monkeypatch):
+    """A conversation transcript is readable by its owner and by admins (for records),
+    but not by other regular users."""
+    install_fake(monkeypatch, [assistant_text("Noted.")])
+    sarah_headers = auth_headers(users["sarah"])
+    cid = client.post(
+        "/api/agent/chat", json={"message": "private note"}, headers=sarah_headers
+    ).json()["conversation_id"]
+
+    assert client.get(f"/api/agent/conversations/{cid}", headers=sarah_headers).status_code == 200
+    assert client.get(f"/api/agent/conversations/{cid}", headers=auth_headers(users["mike"])).status_code == 403
+
+    admin_resp = client.get(f"/api/agent/conversations/{cid}", headers=auth_headers(users["admin"]))
+    assert admin_resp.status_code == 200
+    assert admin_resp.json()["messages"][0]["content"] == "private note"
+
+
+def test_get_missing_conversation_returns_404(client, users):
+    resp = client.get("/api/agent/conversations/99999", headers=auth_headers(users["sarah"]))
+    assert resp.status_code == 404
